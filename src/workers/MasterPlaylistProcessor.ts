@@ -8,6 +8,7 @@ import { TranscodingService } from '../services/TranscodingService';
 import { MasterPlaylistJobData } from '../config/bull';
 import { toStorageKey } from '../utils/storageKeys';
 import { bullLogger, logger } from '../config/logger';
+import { updateTranscodingJobStatus } from '../utils/transcodingJobStatus';
 
 export class MasterPlaylistProcessor {
    private prisma: PrismaClient;
@@ -49,7 +50,11 @@ export class MasterPlaylistProcessor {
          // Upload HLS master playlist to storage
          await this.uploadMasterPlaylist(chapterId, masterPlaylist);
 
-         await this.updateTranscodingJob(chapterId, 'completed', 100);
+         await updateTranscodingJobStatus(this.prisma, {
+            chapterId,
+            status: 'completed',
+            progress: 100,
+         });
 
          // Update job progress
          await job.progress(100);
@@ -60,7 +65,12 @@ export class MasterPlaylistProcessor {
          bullLogger.error({ err: error, chapterId }, 'Master playlist generation failed for chapter');
 
          // Update database with error
-         await this.updateTranscodingJob(chapterId, 'failed', 0, error.message);
+         await updateTranscodingJobStatus(this.prisma, {
+            chapterId,
+            status: 'failed',
+            progress: 0,
+            errorMessage: error.message,
+         });
 
          throw error; // Re-throw to mark job as failed
       }
@@ -193,52 +203,6 @@ export class MasterPlaylistProcessor {
       } catch (error: any) {
          logger.error({ err: error }, 'Error uploading master playlist');
          throw error;
-      }
-   }
-
-   /**
-    * Update transcoding job in database
-    */
-   private async updateTranscodingJob(
-      chapterId: string,
-      status: string,
-      progress: number,
-      errorMessage?: string
-   ): Promise<void> {
-      try {
-         // Find the most recent job for this chapter
-         const existingJob = await this.prisma.transcodingJob.findFirst({
-            where: { chapterId },
-            orderBy: { createdAt: 'desc' }
-         });
-
-         if (existingJob) {
-            await this.prisma.transcodingJob.update({
-               where: { id: existingJob.id },
-               data: {
-                  status,
-                  progress,
-                  ...(errorMessage && { errorMessage }),
-                  ...(status === 'processing' && !existingJob.startedAt && { startedAt: new Date() }),
-                  ...((status === 'completed' || status === 'failed') && { completedAt: new Date() }),
-                  updatedAt: new Date()
-               }
-            });
-         } else {
-            // Create new job if none exists
-            await this.prisma.transcodingJob.create({
-               data: {
-                  chapterId,
-                  status,
-                  progress,
-                  ...(errorMessage && { errorMessage }),
-                  ...(status === 'processing' && { startedAt: new Date() }),
-                  ...((status === 'completed' || status === 'failed') && { completedAt: new Date() })
-               }
-            });
-         }
-      } catch (error: any) {
-         logger.error({ err: error }, 'Error updating transcoding job');
       }
    }
 }

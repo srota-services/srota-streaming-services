@@ -29,7 +29,11 @@ describe('BitrateTranscodingRepository', () => {
 
    it('markStoredOnS3 sets storage provider and progress to 100', async () => {
       const update = jest.fn().mockResolvedValue({});
+      const transaction = jest.fn(async (callback: (tx: unknown) => Promise<void>) => {
+         await callback({ transcodedChapter: { update } });
+      });
       const prisma = {
+         $transaction: transaction,
          transcodedChapter: { update },
       } as unknown as ConstructorParameters<typeof BitrateTranscodingRepository>[0];
 

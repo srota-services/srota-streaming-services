@@ -13,6 +13,7 @@ import { TranscodingRetryService } from '../services/TranscodingRetryService';
 import { BullQueueManager } from '../services/BullQueueManager';
 import { TranscodingEvent } from '../types/transcoding';
 import { logger } from '../config/logger';
+import { isNonEmptyChapterId, isNumericBitrate } from '../utils/streamingValidation';
 
 const HEARTBEAT_MS = 30_000;
 
@@ -63,6 +64,11 @@ export class TranscodingEventsController {
          return;
       }
 
+      if (!isNonEmptyChapterId(chapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
+         return;
+      }
+
       await this.streamEvents(res, [chapterId]);
    });
 
@@ -107,6 +113,11 @@ export class TranscodingEventsController {
          return;
       }
 
+      if (!chapterIds.every(isNonEmptyChapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
+         return;
+      }
+
       await this.streamEvents(res, chapterIds);
    });
 
@@ -144,6 +155,11 @@ export class TranscodingEventsController {
 
       if (!userId) {
          ResponseHandler.unauthorized(res, MessageHandler.getUnauthorizedMessageFromRequest(req, 'not_authenticated'));
+         return;
+      }
+
+      if (!isNonEmptyChapterId(chapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
          return;
       }
 
@@ -200,6 +216,16 @@ export class TranscodingEventsController {
 
       if (!inputPath) {
          ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_request'));
+         return;
+      }
+
+      if (!isNonEmptyChapterId(chapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
+         return;
+      }
+
+      if (bitrates !== undefined && (!Array.isArray(bitrates) || !bitrates.every(isNumericBitrate))) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_bitrate'));
          return;
       }
 

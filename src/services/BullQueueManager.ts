@@ -16,6 +16,9 @@ import {
 } from '../config/bull';
 import { bullLogger } from '../config/logger';
 import { chapterSourceFileExists } from '../utils/chapterSourceFile';
+import { runWrite } from '../utils/prismaTransaction';
+import { rethrowServiceError } from '../utils/serviceError';
+import { updateTranscodingJobStatus } from '../utils/transcodingJobStatus';
 
 export class BullQueueManager {
    private static instance: BullQueueManager;
@@ -93,7 +96,13 @@ export class BullQueueManager {
       queue.on('failed', async (job, err) => {
          bullLogger.error({ err, jobId: job.id, queueName }, 'Job failed in queue');
          if (queueName === QUEUE_NAMES.MASTER_PLAYLIST) {
-            await this.updateJobStatus(job.data.chapterId, 'failed', 0, err.message);
+            await updateTranscodingJobStatus(this.prisma, {
+               chapterId: job.data.chapterId,
+               status: 'failed',
+               progress: 0,
+               errorMessage: err.message,
+               createIfMissing: false,
+            });
          }
       });
 
@@ -310,18 +319,28 @@ export class BullQueueManager {
                continue;
             }
 
-            await this.prisma.transcodedChapter.updateMany({
-               where: {
+            try {
+               await runWrite(this.prisma, async tx => {
+                  await tx.transcodedChapter.updateMany({
+                     where: {
+                        chapterId: data.chapterId,
+                        bitrate: data.bitrate,
+                        status: 'failed',
+                     },
+                     data: {
+                        status: 'pending',
+                        progress: 0,
+                        errorMessage: null,
+                     },
+                  });
+               });
+            } catch (error: unknown) {
+               rethrowServiceError(error, {
+                  operation: 'retryFailedBitrateJobsWithAvailableSource',
                   chapterId: data.chapterId,
                   bitrate: data.bitrate,
-                  status: 'failed',
-               },
-               data: {
-                  status: 'pending',
-                  progress: 0,
-                  errorMessage: null,
-               },
-            });
+               });
+            }
 
             await job.retry();
             bullLogger.info(
@@ -379,36 +398,6 @@ export class BullQueueManager {
       await queue.clean(maxAge, 'completed');
       await queue.clean(maxAge, 'failed');
       bullLogger.info({ queueName }, 'Cleaned up old jobs in queue');
-   }
-
-   private async updateJobStatus(
-      chapterId: string,
-      status: string,
-      progress: number,
-      errorMessage?: string
-   ): Promise<void> {
-      try {
-         const existingJob = await this.prisma.transcodingJob.findFirst({
-            where: { chapterId },
-            orderBy: { createdAt: 'desc' }
-         });
-
-         if (existingJob) {
-            await this.prisma.transcodingJob.update({
-               where: { id: existingJob.id },
-               data: {
-                  status,
-                  progress,
-                  ...(errorMessage && { errorMessage }),
-                  ...(status === 'processing' && !existingJob.startedAt && { startedAt: new Date() }),
-                  ...((status === 'completed' || status === 'failed') && { completedAt: new Date() }),
-                  updatedAt: new Date()
-               }
-            });
-         }
-      } catch (error: any) {
-         bullLogger.error({ err: error, chapterId }, 'Error updating job status');
-      }
    }
 
    public async close(): Promise<void> {
