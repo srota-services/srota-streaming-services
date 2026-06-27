@@ -2,9 +2,12 @@
  * Bitrate Transcoding Repository
  * DB helpers with transaction support for per-bitrate transcoding state
  */
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import { config } from '../config/env';
 import { toStorageKey } from '../utils/storageKeys';
+import { runInTransaction, runWrite } from '../utils/prismaTransaction';
+import { rethrowServiceError } from '../utils/serviceError';
+import { assertNonEmptyChapterId, assertNumericBitrate } from '../utils/streamingValidation';
 import { BitrateTranscodingState } from '../types/transcoding';
 
 export interface UpsertBitrateParams {
@@ -23,30 +26,37 @@ export class BitrateTranscodingRepository {
    constructor(private readonly prisma: PrismaClient) {}
 
    async upsertPending(chapterId: string, bitrates: number[]): Promise<void> {
-      await this.prisma.$transaction(
-         bitrates.map(bitrate =>
-            this.prisma.transcodedChapter.upsert({
-               where: { chapterId_bitrate: { chapterId, bitrate } },
-               update: {
-                  status: 'pending',
-                  progress: 0,
-                  errorMessage: null,
-                  storageCommitted: false,
-                  updatedAt: new Date(),
-               },
-               create: {
-                  chapterId,
-                  bitrate,
-                  status: 'pending',
-                  progress: 0,
-                  playlistUrl: '',
-                  segmentsPath: '',
-                  storageProvider: 'local',
-                  storageCommitted: false,
-               },
-            })
-         )
-      );
+      assertNonEmptyChapterId(chapterId);
+
+      try {
+         await runInTransaction(this.prisma, async tx => {
+            for (const bitrate of bitrates) {
+               assertNumericBitrate(bitrate);
+               await tx.transcodedChapter.upsert({
+                  where: { chapterId_bitrate: { chapterId, bitrate } },
+                  update: {
+                     status: 'pending',
+                     progress: 0,
+                     errorMessage: null,
+                     storageCommitted: false,
+                     updatedAt: new Date(),
+                  },
+                  create: {
+                     chapterId,
+                     bitrate,
+                     status: 'pending',
+                     progress: 0,
+                     playlistUrl: '',
+                     segmentsPath: '',
+                     storageProvider: 'local',
+                     storageCommitted: false,
+                  },
+               });
+            }
+         });
+      } catch (error: unknown) {
+         rethrowServiceError(error, { operation: 'upsertPending', chapterId });
+      }
    }
 
    async updateProgress(
@@ -54,79 +64,113 @@ export class BitrateTranscodingRepository {
       bitrate: number,
       progress: number
    ): Promise<void> {
-      await this.prisma.transcodedChapter.update({
-         where: { chapterId_bitrate: { chapterId, bitrate } },
-         data: { progress, updatedAt: new Date() },
-      });
+      assertNonEmptyChapterId(chapterId);
+      assertNumericBitrate(bitrate);
+
+      try {
+         await runWrite(this.prisma, async tx => {
+            await tx.transcodedChapter.update({
+               where: { chapterId_bitrate: { chapterId, bitrate } },
+               data: { progress, updatedAt: new Date() },
+            });
+         });
+      } catch (error: unknown) {
+         rethrowServiceError(error, { operation: 'updateProgress', chapterId, bitrate });
+      }
    }
 
    async markProcessing(chapterId: string, bitrate: number): Promise<void> {
-      await this.prisma.transcodedChapter.upsert({
-         where: { chapterId_bitrate: { chapterId, bitrate } },
-         update: {
-            status: 'processing',
-            progress: 0,
-            errorMessage: null,
-            updatedAt: new Date(),
-         },
-         create: {
-            chapterId,
-            bitrate,
-            status: 'processing',
-            progress: 0,
-            playlistUrl: '',
-            segmentsPath: '',
-            storageProvider: 'local',
-            storageCommitted: false,
-         },
-      });
+      assertNonEmptyChapterId(chapterId);
+      assertNumericBitrate(bitrate);
+
+      try {
+         await runWrite(this.prisma, async tx => {
+            await tx.transcodedChapter.upsert({
+               where: { chapterId_bitrate: { chapterId, bitrate } },
+               update: {
+                  status: 'processing',
+                  progress: 0,
+                  errorMessage: null,
+                  updatedAt: new Date(),
+               },
+               create: {
+                  chapterId,
+                  bitrate,
+                  status: 'processing',
+                  progress: 0,
+                  playlistUrl: '',
+                  segmentsPath: '',
+                  storageProvider: 'local',
+                  storageCommitted: false,
+               },
+            });
+         });
+      } catch (error: unknown) {
+         rethrowServiceError(error, { operation: 'markProcessing', chapterId, bitrate });
+      }
    }
 
    async commitCompletedLocal(
       chapterId: string,
       bitrate: number
    ): Promise<{ playlistUrl: string; segmentsPath: string }> {
+      assertNonEmptyChapterId(chapterId);
+      assertNumericBitrate(bitrate);
+
       const playlistUrl = toStorageKey(`bit_transcode/${chapterId}/${bitrate}k/playlist.m3u8`);
       const segmentsPath = toStorageKey(`bit_transcode/${chapterId}/${bitrate}k/`);
 
-      await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-         await tx.transcodedChapter.upsert({
-            where: { chapterId_bitrate: { chapterId, bitrate } },
-            update: {
-               playlistUrl,
-               segmentsPath,
-               status: 'completed',
-               progress: 100,
-               storageProvider: 'local',
-               storageCommitted: true,
-               errorMessage: null,
-               updatedAt: new Date(),
-            },
-            create: {
-               chapterId,
-               bitrate,
-               playlistUrl,
-               segmentsPath,
-               status: 'completed',
-               progress: 100,
-               storageProvider: 'local',
-               storageCommitted: true,
-            },
+      try {
+         await runWrite(this.prisma, async tx => {
+            await tx.transcodedChapter.upsert({
+               where: { chapterId_bitrate: { chapterId, bitrate } },
+               update: {
+                  playlistUrl,
+                  segmentsPath,
+                  status: 'completed',
+                  progress: 100,
+                  storageProvider: 'local',
+                  storageCommitted: true,
+                  errorMessage: null,
+                  updatedAt: new Date(),
+               },
+               create: {
+                  chapterId,
+                  bitrate,
+                  playlistUrl,
+                  segmentsPath,
+                  status: 'completed',
+                  progress: 100,
+                  storageProvider: 'local',
+                  storageCommitted: true,
+               },
+            });
          });
-      });
+      } catch (error: unknown) {
+         rethrowServiceError(error, { operation: 'commitCompletedLocal', chapterId, bitrate });
+      }
 
       return { playlistUrl, segmentsPath };
    }
 
    async markStoredOnS3(chapterId: string, bitrate: number): Promise<void> {
-      await this.prisma.transcodedChapter.update({
-         where: { chapterId_bitrate: { chapterId, bitrate } },
-         data: {
-            storageProvider: config.STORAGE_PROVIDER,
-            progress: 100,
-            updatedAt: new Date(),
-         },
-      });
+      assertNonEmptyChapterId(chapterId);
+      assertNumericBitrate(bitrate);
+
+      try {
+         await runWrite(this.prisma, async tx => {
+            await tx.transcodedChapter.update({
+               where: { chapterId_bitrate: { chapterId, bitrate } },
+               data: {
+                  storageProvider: config.STORAGE_PROVIDER,
+                  progress: 100,
+                  updatedAt: new Date(),
+               },
+            });
+         });
+      } catch (error: unknown) {
+         rethrowServiceError(error, { operation: 'markStoredOnS3', chapterId, bitrate });
+      }
    }
 
    async markFailed(
@@ -135,101 +179,122 @@ export class BitrateTranscodingRepository {
       progress: number,
       errorMessage: string
    ): Promise<void> {
-      await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-         await tx.transcodedChapter.upsert({
-            where: { chapterId_bitrate: { chapterId, bitrate } },
-            update: {
-               status: 'failed',
-               progress,
-               errorMessage,
-               updatedAt: new Date(),
-            },
-            create: {
-               chapterId,
-               bitrate,
-               status: 'failed',
-               progress,
-               errorMessage,
-               playlistUrl: '',
-               segmentsPath: '',
-               storageProvider: 'local',
-               storageCommitted: false,
-            },
-         });
-      });
-   }
+      assertNonEmptyChapterId(chapterId);
+      assertNumericBitrate(bitrate);
 
-   async resetForRetry(chapterId: string, bitrates: number[]): Promise<void> {
-      await this.prisma.$transaction(
-         bitrates.map(bitrate =>
-            this.prisma.transcodedChapter.upsert({
+      try {
+         await runWrite(this.prisma, async tx => {
+            await tx.transcodedChapter.upsert({
                where: { chapterId_bitrate: { chapterId, bitrate } },
                update: {
-                  status: 'pending',
-                  progress: 0,
-                  errorMessage: null,
-                  storageCommitted: false,
+                  status: 'failed',
+                  progress,
+                  errorMessage,
                   updatedAt: new Date(),
                },
                create: {
                   chapterId,
                   bitrate,
-                  status: 'pending',
-                  progress: 0,
+                  status: 'failed',
+                  progress,
+                  errorMessage,
                   playlistUrl: '',
                   segmentsPath: '',
                   storageProvider: 'local',
                   storageCommitted: false,
                },
-            })
-         )
-      );
+            });
+         });
+      } catch (error: unknown) {
+         rethrowServiceError(error, { operation: 'markFailed', chapterId, bitrate });
+      }
+   }
+
+   async resetForRetry(chapterId: string, bitrates: number[]): Promise<void> {
+      assertNonEmptyChapterId(chapterId);
+
+      try {
+         await runInTransaction(this.prisma, async tx => {
+            for (const bitrate of bitrates) {
+               assertNumericBitrate(bitrate);
+               await tx.transcodedChapter.upsert({
+                  where: { chapterId_bitrate: { chapterId, bitrate } },
+                  update: {
+                     status: 'pending',
+                     progress: 0,
+                     errorMessage: null,
+                     storageCommitted: false,
+                     updatedAt: new Date(),
+                  },
+                  create: {
+                     chapterId,
+                     bitrate,
+                     status: 'pending',
+                     progress: 0,
+                     playlistUrl: '',
+                     segmentsPath: '',
+                     storageProvider: 'local',
+                     storageCommitted: false,
+                  },
+               });
+            }
+         });
+      } catch (error: unknown) {
+         rethrowServiceError(error, { operation: 'resetForRetry', chapterId });
+      }
    }
 
    async resetAllForRetranscode(chapterId: string, bitrates: number[]): Promise<void> {
-      await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-         await tx.transcodedChapter.deleteMany({ where: { chapterId } });
-         for (const bitrate of bitrates) {
-            await tx.transcodedChapter.create({
-               data: {
-                  chapterId,
-                  bitrate,
-                  status: 'pending',
-                  progress: 0,
-                  playlistUrl: '',
-                  segmentsPath: '',
-                  storageProvider: 'local',
-                  storageCommitted: false,
-               },
+      assertNonEmptyChapterId(chapterId);
+
+      try {
+         await runInTransaction(this.prisma, async tx => {
+            await tx.transcodedChapter.deleteMany({ where: { chapterId } });
+            for (const bitrate of bitrates) {
+               assertNumericBitrate(bitrate);
+               await tx.transcodedChapter.create({
+                  data: {
+                     chapterId,
+                     bitrate,
+                     status: 'pending',
+                     progress: 0,
+                     playlistUrl: '',
+                     segmentsPath: '',
+                     storageProvider: 'local',
+                     storageCommitted: false,
+                  },
+               });
+            }
+            const existingJob = await tx.transcodingJob.findFirst({
+               where: { chapterId },
+               orderBy: { createdAt: 'desc' },
             });
-         }
-         const existingJob = await tx.transcodingJob.findFirst({
-            where: { chapterId },
-            orderBy: { createdAt: 'desc' },
+            if (existingJob) {
+               await tx.transcodingJob.update({
+                  where: { id: existingJob.id },
+                  data: {
+                     status: 'processing',
+                     progress: 0,
+                     errorMessage: null,
+                     startedAt: new Date(),
+                     completedAt: null,
+                     updatedAt: new Date(),
+                  },
+               });
+            } else {
+               await tx.transcodingJob.create({
+                  data: {
+                     chapterId,
+                     status: 'processing',
+                     progress: 0,
+                     startedAt: new Date(),
+                  },
+               });
+            }
          });
-         if (existingJob) {
-            await tx.transcodingJob.update({
-               where: { id: existingJob.id },
-               data: {
-                  status: 'processing',
-                  progress: 0,
-                  errorMessage: null,
-                  startedAt: new Date(),
-                  completedAt: null,
-                  updatedAt: new Date(),
-               },
-            });
-         } else {
-            await tx.transcodingJob.create({
-               data: {
-                  chapterId,
-                  status: 'processing',
-                  progress: 0,
-                  startedAt: new Date(),
-               },
-            });
-         }
-      });
+      } catch (error: unknown) {
+         rethrowServiceError(error, { operation: 'resetAllForRetranscode', chapterId });
+      }
    }
 
    async getBitrateRows(chapterId: string) {

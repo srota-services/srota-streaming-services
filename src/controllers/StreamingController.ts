@@ -10,6 +10,7 @@ import { ErrorHandler } from '../middleware/ErrorHandler';
 import { ResponseHandler } from '../utils/ResponseHandler';
 import { MessageHandler } from '../utils/MessageHandler';
 import { logger } from '../config/logger';
+import { isNonEmptyChapterId, isNumericBitrate } from '../utils/streamingValidation';
 
 export class StreamingController {
    private prisma: PrismaClient;
@@ -74,6 +75,16 @@ export class StreamingController {
 
       if (!userId) {
          ResponseHandler.unauthorized(res, MessageHandler.getUnauthorizedMessageFromRequest(req, 'not_authenticated'));
+         return;
+      }
+
+      if (!isNonEmptyChapterId(chapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
+         return;
+      }
+
+      if (preferredBitrate !== undefined && !isNumericBitrate(preferredBitrate)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_bitrate'));
          return;
       }
 
@@ -142,7 +153,12 @@ export class StreamingController {
          return;
       }
 
-      if (isNaN(bitrate)) {
+      if (!isNonEmptyChapterId(chapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
+         return;
+      }
+
+      if (isNaN(bitrate) || !isNumericBitrate(bitrate)) {
          ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_bitrate'));
          return;
       }
@@ -218,7 +234,12 @@ export class StreamingController {
          return;
       }
 
-      if (isNaN(bitrate)) {
+      if (!isNonEmptyChapterId(chapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
+         return;
+      }
+
+      if (isNaN(bitrate) || !isNumericBitrate(bitrate)) {
          ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_bitrate'));
          return;
       }
@@ -306,6 +327,11 @@ export class StreamingController {
          return;
       }
 
+      if (!isNonEmptyChapterId(chapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
+         return;
+      }
+
       const status = await this.streamingService.getStreamingStatus(chapterId);
 
       ResponseHandler.success(res, status, MessageHandler.getStreamingMessageFromRequest(req, 'status_retrieved'));
@@ -381,6 +407,16 @@ export class StreamingController {
 
       if (!userId) {
          ResponseHandler.unauthorized(res, MessageHandler.getUnauthorizedMessageFromRequest(req, 'not_authenticated'));
+         return;
+      }
+
+      if (!isNonEmptyChapterId(chapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
+         return;
+      }
+
+      if (bitrate !== undefined && !isNumericBitrate(bitrate)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_bitrate'));
          return;
       }
 
@@ -461,6 +497,11 @@ export class StreamingController {
 
       if (!userId) {
          ResponseHandler.unauthorized(res, MessageHandler.getUnauthorizedMessageFromRequest(req, 'not_authenticated'));
+         return;
+      }
+
+      if (chapterId && !isNonEmptyChapterId(chapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
          return;
       }
 

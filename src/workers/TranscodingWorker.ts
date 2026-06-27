@@ -11,6 +11,8 @@ import { logger } from '../config/logger';
 import { BitrateTranscodingRepository } from '../services/BitrateTranscodingRepository';
 import { TranscodingEventPublisher } from '../services/TranscodingEventPublisher';
 import { TranscodingArtifactCleanupService } from '../services/TranscodingArtifactCleanupService';
+import { runInTransaction } from '../utils/prismaTransaction';
+import { updateTranscodingJobStatus } from '../utils/transcodingJobStatus';
 
 export class TranscodingWorker {
    private prisma: PrismaClient;
@@ -148,25 +150,27 @@ export class TranscodingWorker {
             }
          }
 
-         const existingJob = await this.prisma.transcodingJob.findFirst({
-            where: { chapterId: chapter.id },
-            orderBy: { createdAt: 'desc' },
+         await runInTransaction(this.prisma, async tx => {
+            const existingJob = await tx.transcodingJob.findFirst({
+               where: { chapterId: chapter.id },
+               orderBy: { createdAt: 'desc' },
+            });
+            if (!existingJob || forceRetranscode) {
+               await tx.transcodingJob.create({
+                  data: {
+                     chapterId: chapter.id,
+                     status: 'processing',
+                     progress: 0,
+                     startedAt: new Date(),
+                  },
+               });
+            } else {
+               await tx.transcodingJob.update({
+                  where: { id: existingJob.id },
+                  data: { status: 'processing', progress: 0, startedAt: new Date(), completedAt: null },
+               });
+            }
          });
-         if (!existingJob || forceRetranscode) {
-            await this.prisma.transcodingJob.create({
-               data: {
-                  chapterId: chapter.id,
-                  status: 'processing',
-                  progress: 0,
-                  startedAt: new Date(),
-               },
-            });
-         } else {
-            await this.prisma.transcodingJob.update({
-               where: { id: existingJob.id },
-               data: { status: 'processing', progress: 0, startedAt: new Date(), completedAt: null },
-            });
-         }
 
          await this.bitrateRepo.upsertPending(chapter.id, targetBitrates);
          for (const bitrate of targetBitrates) {
@@ -232,7 +236,12 @@ export class TranscodingWorker {
          }
 
          // Update job status in database
-         await this.updateTranscodingJobStatus(chapter.id, 'failed', 0, error.message);
+         await updateTranscodingJobStatus(this.prisma, {
+            chapterId: chapter.id,
+            status: 'failed',
+            progress: 0,
+            errorMessage: error.message,
+         });
       }
    }
 
@@ -245,53 +254,6 @@ export class TranscodingWorker {
          await rabbitMQ.publishTranscodingJob(jobData, priority);
       } catch (error: any) {
          logger.error({ err: error }, 'Error publishing transcoding job');
-      }
-   }
-
-   /**
-    * Update transcoding job status in database
-    */
-   private async updateTranscodingJobStatus(
-      chapterId: string,
-      status: string,
-      progress: number,
-      errorMessage?: string
-   ): Promise<void> {
-      try {
-         // Find the most recent job for this chapter
-         const existingJob = await this.prisma.transcodingJob.findFirst({
-            where: { chapterId },
-            orderBy: { createdAt: 'desc' }
-         });
-
-         if (existingJob) {
-            // Update existing job
-            await this.prisma.transcodingJob.update({
-               where: { id: existingJob.id },
-               data: {
-                  status,
-                  progress,
-                  ...(errorMessage && { errorMessage }),
-                  ...(status === 'processing' && !existingJob.startedAt && { startedAt: new Date() }),
-                  ...((status === 'completed' || status === 'failed') && { completedAt: new Date() }),
-                  updatedAt: new Date()
-               }
-            });
-         } else {
-            // Create new job if none exists
-            await this.prisma.transcodingJob.create({
-               data: {
-                  chapterId,
-                  status,
-                  progress,
-                  ...(errorMessage && { errorMessage }),
-                  ...(status === 'processing' && { startedAt: new Date() }),
-                  ...((status === 'completed' || status === 'failed') && { completedAt: new Date() })
-               }
-            });
-         }
-      } catch (error: any) {
-         logger.error({ err: error }, 'Error updating transcoding job status');
       }
    }
 
