@@ -1,14 +1,16 @@
 /**
  * Pino Logger Configuration
- * File-only structured logging per component
+ * File-only structured logging per component.
+ * All error-level logs are mirrored to error.log.
  */
-import pino, { Logger } from 'pino';
+import pino, { Logger, LoggerOptions } from 'pino';
 import path from 'path';
 import fs from 'fs';
 import { config } from './env';
 
 interface ServiceLoggers {
    logger: Logger;
+   errorLogger: Logger;
    apiAccessLogger: Logger;
    redisLogger: Logger;
    bullLogger: Logger;
@@ -20,6 +22,7 @@ function createLoggers(): ServiceLoggers {
       const silent = pino({ level: 'silent' });
       return {
          logger: silent,
+         errorLogger: silent,
          apiAccessLogger: silent,
          redisLogger: silent,
          bullLogger: silent,
@@ -45,30 +48,42 @@ function createLoggers(): ServiceLoggers {
       return pino.destination({ fd, minLength: 0, sync: false });
    }
 
+   const errorLogFile = createFileDestination('error.log');
+
+   function createMirroredLogger(filename: string, component?: string): Logger {
+      const fileDest = createFileDestination(filename);
+      const options: LoggerOptions = component
+         ? { ...baseLoggerConfig, base: { component } }
+         : baseLoggerConfig;
+
+      return pino(
+         options,
+         pino.multistream([
+            { stream: fileDest },
+            { level: 'error', stream: errorLogFile },
+         ]),
+      );
+   }
+
+   const errorLogger = pino(
+      { ...baseLoggerConfig, level: 'error' },
+      errorLogFile,
+   );
+
    return {
-      logger: pino(baseLoggerConfig, createFileDestination('app.log')),
-      apiAccessLogger: pino(
-         { ...baseLoggerConfig, base: { component: 'api-access' } },
-         createFileDestination('api-access.log')
-      ),
-      redisLogger: pino(
-         { ...baseLoggerConfig, base: { component: 'redis' } },
-         createFileDestination('redis.log')
-      ),
-      bullLogger: pino(
-         { ...baseLoggerConfig, base: { component: 'bull' } },
-         createFileDestination('bull.log')
-      ),
-      rabbitmqLogger: pino(
-         { ...baseLoggerConfig, base: { component: 'rabbitmq' } },
-         createFileDestination('rabbitmq.log')
-      ),
+      logger: createMirroredLogger('app.log'),
+      errorLogger,
+      apiAccessLogger: createMirroredLogger('api-access.log', 'api-access'),
+      redisLogger: createMirroredLogger('redis.log', 'redis'),
+      bullLogger: createMirroredLogger('bull.log', 'bull'),
+      rabbitmqLogger: createMirroredLogger('rabbitmq.log', 'rabbitmq'),
    };
 }
 
 const loggers = createLoggers();
 
 export const logger = loggers.logger;
+export const errorLogger = loggers.errorLogger;
 export const apiAccessLogger = loggers.apiAccessLogger;
 export const redisLogger = loggers.redisLogger;
 export const bullLogger = loggers.bullLogger;
