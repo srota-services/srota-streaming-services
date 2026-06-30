@@ -208,7 +208,7 @@ const options: swaggerJsdoc.Options = {
                      example: {
                         success: false,
                         error: 'Forbidden',
-                        message: 'Your current subscription plan does not include access to this chapter.',
+                        message: 'Your plan does not include this chapter. Upgrade to listen',
                         statusCode: 403,
                      },
                   },

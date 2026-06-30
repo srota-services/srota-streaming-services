@@ -74,9 +74,9 @@ const messages: Record<string, MessageCatalog> = {
          segment_not_found: 'Segment file not found',
          storage_error: 'Storage operation failed',
          transcoding_error: 'Transcoding operation failed',
-         subscription_required: 'This audiobook requires an active subscription',
-         subscription_tier_too_low_chapter: 'Your current subscription plan does not include access to this chapter.',
-         guest_streaming_not_allowed: 'Please sign up or log in to play audiobooks',
+         subscription_required: 'Subscribe to listen to this audiobook',
+         subscription_tier_too_low_chapter: 'Your plan does not include this chapter. Upgrade to listen',
+         guest_streaming_not_allowed: 'Sign up or sign in to play audiobooks',
       },
       success: {
          operation_completed: 'Operation completed successfully',
