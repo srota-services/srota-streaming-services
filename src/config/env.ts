@@ -117,6 +117,7 @@ function validateNoLocalhostInStagingOrProduction(
       RABBITMQ_URL: string;
       STREAMING_BASE_URL: string;
       AUTH_SERVICE_URL: string;
+      APP_SERVICE_URL: string;
       JWKS_ENDPOINT: string;
    }
 ): void {
@@ -129,6 +130,7 @@ function validateNoLocalhostInStagingOrProduction(
    assertNoLocalhost('RABBITMQ_URL', values.RABBITMQ_URL, nodeEnv);
    assertNoLocalhost('STREAMING_BASE_URL', values.STREAMING_BASE_URL, nodeEnv);
    assertNoLocalhost('AUTH_SERVICE_URL', values.AUTH_SERVICE_URL, nodeEnv);
+   assertNoLocalhost('APP_SERVICE_URL', values.APP_SERVICE_URL, nodeEnv);
    assertNoLocalhost('JWKS_ENDPOINT', values.JWKS_ENDPOINT, nodeEnv);
 }
 
@@ -141,6 +143,7 @@ const REDIS_URL = requireEnv('REDIS_URL');
 const RABBITMQ_URL = requireEnv('RABBITMQ_URL');
 const STREAMING_BASE_URL = requireEnv('STREAMING_BASE_URL');
 const AUTH_SERVICE_URL = requireEnv('AUTH_SERVICE_URL');
+const APP_SERVICE_URL = requireEnv('APP_SERVICE_URL');
 const JWKS_ENDPOINT = requireEnv('JWKS_ENDPOINT');
 const STORAGE_PROVIDER = requireEnv('STORAGE_PROVIDER');
 
@@ -150,6 +153,7 @@ validateNoLocalhostInStagingOrProduction(nodeEnv, {
    RABBITMQ_URL,
    STREAMING_BASE_URL,
    AUTH_SERVICE_URL,
+   APP_SERVICE_URL,
    JWKS_ENDPOINT,
 });
 
@@ -214,6 +218,7 @@ export const config = {
    CACHE_TTL: requireIntEnv('CACHE_TTL'),
 
    AUTH_SERVICE_URL,
+   APP_SERVICE_URL,
    JWKS_ENDPOINT,
 
    HEALTH_SUPPORT_EMAIL,
