@@ -54,6 +54,8 @@ export class TranscodingEventsController {
     *               type: string
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     */
    getChapterTranscodingEvents = ErrorHandler.asyncHandler(async (req: Request, res: Response): Promise<void> => {
       const chapterId = req.params['chapterId'] as string;
@@ -93,6 +95,8 @@ export class TranscodingEventsController {
     *             schema: { type: string }
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     */
    getMultiplexedTranscodingEvents = ErrorHandler.asyncHandler(async (req: Request, res: Response): Promise<void> => {
       const userId = (req as Request & { user?: { id: string } }).user?.id;
@@ -148,6 +152,8 @@ export class TranscodingEventsController {
     *                       $ref: '#/components/schemas/ChapterTranscodingStatusDetail'
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     */
    getDetailedTranscodingStatus = ErrorHandler.asyncHandler(async (req: Request, res: Response): Promise<void> => {
       const chapterId = req.params['chapterId'] as string;
@@ -203,6 +209,8 @@ export class TranscodingEventsController {
     *                           items: { type: integer }
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     */
    retryTranscoding = ErrorHandler.asyncHandler(async (req: Request, res: Response): Promise<void> => {
       const chapterId = req.params['chapterId'] as string;

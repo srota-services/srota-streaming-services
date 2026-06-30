@@ -62,6 +62,8 @@ export class StreamingController {
     *               type: string
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     *       404:
     *         description: Chapter not found or no transcoded versions available
     *       500:
@@ -138,6 +140,8 @@ export class StreamingController {
     *         description: Invalid bitrate path parameter
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     *       404:
     *         description: Chapter not found or transcoded version not available
     *       500:
@@ -218,6 +222,8 @@ export class StreamingController {
     *         description: Invalid bitrate path parameter
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     *       404:
     *         description: Segment not found
     *       500:
@@ -315,6 +321,8 @@ export class StreamingController {
     *                   statusCode: 200
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     *       500:
     *         description: Internal server error
     */
@@ -395,6 +403,8 @@ export class StreamingController {
     *               statusCode: 200
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     *       404:
     *         $ref: '#/components/responses/NotFound'
     *       500:
@@ -488,6 +498,8 @@ export class StreamingController {
     *               statusCode: 200
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     *       500:
     *         description: Internal server error
     */

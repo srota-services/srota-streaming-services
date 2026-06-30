@@ -200,6 +200,20 @@ const options: swaggerJsdoc.Options = {
                   },
                },
             },
+            Forbidden: {
+               description: 'Subscription gating denied (LISTENER role) or guest streaming blocked',
+               content: {
+                  'application/json': {
+                     schema: { $ref: '#/components/schemas/ErrorResponse' },
+                     example: {
+                        success: false,
+                        error: 'Forbidden',
+                        message: 'Your current subscription plan does not include access to this chapter.',
+                        statusCode: 403,
+                     },
+                  },
+               },
+            },
             NotFound: {
                description: 'Chapter or resource not found',
                content: {
