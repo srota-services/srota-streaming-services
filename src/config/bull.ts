@@ -25,6 +25,7 @@ export interface BitrateTranscodingJobData {
 
 export interface MasterPlaylistJobData {
    chapterId: string;
+   audiobookId?: string;
    outputDir: string;
    variantBitrates: number[];
 }

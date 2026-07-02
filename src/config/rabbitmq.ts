@@ -26,13 +26,16 @@ export interface TranscodingJobData {
    forceRetranscode?: boolean;
 }
 
-export interface ChapterDeletionMessage {
-   chapterId: string;
-   timestamp: string;
-}
+import { ChapterDeletionMessage, ChapterTranscodingCompletedMessage } from '../types/chapter-events';
+
+export type { ChapterDeletionMessage, ChapterTranscodingCompletedMessage };
 
 export function getChapterDeletionQueueName(): string {
    return `${config.RABBITMQ_QUEUE_PREFIX}.chapters.deleted`;
+}
+
+export function getChapterTranscodingCompletedQueueName(): string {
+   return `${config.RABBITMQ_QUEUE_PREFIX}.chapters.transcoding.completed`;
 }
 
 export class RabbitMQConnection {
@@ -140,6 +143,10 @@ export class RabbitMQConnection {
          await this.assertQueueWithFallback(chapterDeletionQueue);
          await this.channel.bindQueue(chapterDeletionQueue, 'chapters', 'chapter.deleted');
 
+         const chapterTranscodingCompletedQueue = getChapterTranscodingCompletedQueueName();
+         await this.assertQueueWithFallback(chapterTranscodingCompletedQueue);
+         await this.channel.bindQueue(chapterTranscodingCompletedQueue, 'chapters', 'chapter.transcoding.completed');
+
          // Bind transcoding queues to exchange
          await this.channel.bindQueue(`${queuePrefix}.transcode.priority`, 'transcoding.exchange', 'priority');
          await this.channel.bindQueue(`${queuePrefix}.transcode.normal`, 'transcoding.exchange', 'normal');
@@ -166,7 +173,8 @@ export class RabbitMQConnection {
          [`${config.RABBITMQ_QUEUE_PREFIX}.transcode.priority`]: 3600000, // 1 hour
          [`${config.RABBITMQ_QUEUE_PREFIX}.transcode.normal`]: 3600000,    // 1 hour
          [`${config.RABBITMQ_QUEUE_PREFIX}.transcode.low`]: 7200000,       // 2 hours
-         [getChapterDeletionQueueName()]: 3600000     // 1 hour (matches existing queue configuration)
+         [getChapterDeletionQueueName()]: 3600000,     // 1 hour (matches existing queue configuration)
+         [getChapterTranscodingCompletedQueueName()]: 3600000,
       };
 
       const ttl = queueTTLMap[queueName] || config.RABBITMQ_MESSAGE_TTL;
@@ -251,6 +259,47 @@ export class RabbitMQConnection {
          }
       } catch (error) {
          rabbitmqLogger.error({ err: error }, 'Error publishing transcoding job');
+         return false;
+      }
+   }
+
+   /**
+    * Publish chapter transcoding completed event (streaming → app-service)
+    */
+   public async publishChapterTranscodingCompleted(
+      message: ChapterTranscodingCompletedMessage,
+   ): Promise<boolean> {
+      if (!this.channel) {
+         throw new Error('Channel not available');
+      }
+
+      const routingKey = 'chapter.transcoding.completed';
+
+      try {
+         const payload = Buffer.from(JSON.stringify(message));
+
+         const published = this.channel.publish(
+            'chapters',
+            routingKey,
+            payload,
+            {
+               persistent: true,
+               messageId: `chapter-transcoding-completed-${message.chapterId}-${Date.now()}`,
+            },
+         );
+
+         if (published) {
+            rabbitmqLogger.info(
+               { chapterId: message.chapterId, audiobookId: message.audiobookId },
+               'Chapter transcoding completed event published',
+            );
+            return true;
+         }
+
+         rabbitmqLogger.error('Failed to publish chapter transcoding completed event - channel buffer full');
+         return false;
+      } catch (error) {
+         rabbitmqLogger.error({ err: error, chapterId: message.chapterId }, 'Error publishing chapter transcoding completed event');
          return false;
       }
    }

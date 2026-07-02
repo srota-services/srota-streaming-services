@@ -204,6 +204,7 @@ export class TranscodingWorker {
             try {
                const masterJob = await this.bullQueueManager.addMasterPlaylistJob({
                   chapterId: chapter.id,
+                  audiobookId: chapter.audiobookId,
                   outputDir,
                   variantBitrates: targetBitrates,
                }, priority);
