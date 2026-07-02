@@ -9,6 +9,7 @@ import { MasterPlaylistJobData } from '../config/bull';
 import { toStorageKey } from '../utils/storageKeys';
 import { bullLogger, logger } from '../config/logger';
 import { updateTranscodingJobStatus } from '../utils/transcodingJobStatus';
+import { RabbitMQFactory } from '../config/rabbitmq';
 
 export class MasterPlaylistProcessor {
    private prisma: PrismaClient;
@@ -23,31 +24,27 @@ export class MasterPlaylistProcessor {
     * Process master playlist generation job
     */
    public async processMasterPlaylist(job: Bull.Job<MasterPlaylistJobData>): Promise<void> {
-      const { chapterId, variantBitrates } = job.data;
+      const { chapterId, audiobookId, variantBitrates } = job.data;
 
       bullLogger.info({ chapterId }, 'Processing master playlist generation for chapter');
 
       try {
-         // Update job progress
          await job.progress(10);
 
-         // Wait for bitrate jobs to complete and check which ones succeeded
          const completedBitrates = await this.waitForBitrateJobs(chapterId, variantBitrates);
 
-         if (completedBitrates.length === 0) {
-            throw new Error('No bitrate transcoding jobs completed successfully');
+         if (completedBitrates.length !== variantBitrates.length) {
+            throw new Error(
+               `Not all bitrates completed successfully (expected ${variantBitrates.length}, got ${completedBitrates.length})`,
+            );
          }
 
-         // Update job progress
          await job.progress(30);
 
-         // Generate HLS master playlist for completed bitrates
          const masterPlaylist = await this.generateMasterPlaylistForBitrates(chapterId, completedBitrates);
 
-         // Update job progress
          await job.progress(70);
 
-         // Upload HLS master playlist to storage
          await this.uploadMasterPlaylist(chapterId, masterPlaylist);
 
          await updateTranscodingJobStatus(this.prisma, {
@@ -56,7 +53,8 @@ export class MasterPlaylistProcessor {
             progress: 100,
          });
 
-         // Update job progress
+         await this.publishTranscodingCompleted(chapterId, audiobookId, completedBitrates);
+
          await job.progress(100);
 
          bullLogger.info({ chapterId }, 'Successfully completed master playlist generation for chapter');
@@ -64,7 +62,6 @@ export class MasterPlaylistProcessor {
       } catch (error: any) {
          bullLogger.error({ err: error, chapterId }, 'Master playlist generation failed for chapter');
 
-         // Update database with error
          await updateTranscodingJobStatus(this.prisma, {
             chapterId,
             status: 'failed',
@@ -72,12 +69,36 @@ export class MasterPlaylistProcessor {
             errorMessage: error.message,
          });
 
-         throw error; // Re-throw to mark job as failed
+         throw error;
+      }
+   }
+
+   private async publishTranscodingCompleted(
+      chapterId: string,
+      audiobookId: string | undefined,
+      bitrates: number[],
+   ): Promise<void> {
+      if (!audiobookId) {
+         bullLogger.warn({ chapterId }, 'Skipping chapter transcoding completed publish — audiobookId missing');
+         return;
+      }
+
+      try {
+         const rabbitMQ = RabbitMQFactory.getConnection();
+         await rabbitMQ.publishChapterTranscodingCompleted({
+            chapterId,
+            audiobookId,
+            bitrates,
+            status: 'completed',
+            timestamp: new Date().toISOString(),
+         });
+      } catch (error: any) {
+         bullLogger.error({ err: error, chapterId }, 'Failed to publish chapter transcoding completed event');
       }
    }
 
    /**
-    * Wait for bitrate jobs to complete and return successful ones
+    * Wait for all bitrate jobs to complete; fail on timeout or partial success.
     */
    private async waitForBitrateJobs(chapterId: string, expectedBitrates: number[]): Promise<number[]> {
       const maxWaitTime = 30 * 60 * 1000; // 30 minutes
@@ -107,13 +128,13 @@ export class MasterPlaylistProcessor {
 
       const finalBitrates = await this.getCompletedBitrates(chapterId, expectedBitrates);
 
-      if (finalBitrates.length > 0) {
-         logger.warn({ chapterId, count: finalBitrates.length, completedBitrates: finalBitrates.join(', ') }, 'Timeout waiting for all bitrate jobs for chapter, returning completed bitrates');
+      if (finalBitrates.length === expectedBitrates.length) {
          return finalBitrates;
       }
 
-      logger.warn({ chapterId }, 'Timeout waiting for bitrate jobs for chapter, no bitrates completed');
-      return [];
+      throw new Error(
+         `Timeout waiting for all bitrate jobs (expected ${expectedBitrates.length}, completed ${finalBitrates.length})`,
+      );
    }
 
    private async getCompletedBitrates(chapterId: string, expectedBitrates: number[]): Promise<number[]> {
@@ -139,7 +160,7 @@ export class MasterPlaylistProcessor {
       });
 
       return expectedBitrates.every(
-         bitrate => rows.find(row => row.bitrate === bitrate)?.status === 'failed'
+         bitrate => rows.find(row => row.bitrate === bitrate)?.status === 'failed',
       );
    }
 
@@ -148,16 +169,14 @@ export class MasterPlaylistProcessor {
     */
    private async generateMasterPlaylistForBitrates(chapterId: string, _bitrates: number[]): Promise<string> {
       try {
-         // Get ALL completed transcoded chapters for this chapter (not just the ones passed in)
-         // This ensures we include any bitrates that completed after the initial check
          const transcodedChapters = await this.prisma.transcodedChapter.findMany({
             where: {
                chapterId,
-               status: 'completed'
+               status: 'completed',
             },
             orderBy: {
-               bitrate: 'asc'
-            }
+               bitrate: 'asc',
+            },
          });
 
          if (transcodedChapters.length === 0) {
@@ -166,14 +185,12 @@ export class MasterPlaylistProcessor {
 
          logger.info({ chapterId, count: transcodedChapters.length, bitrates: transcodedChapters.map(tc => tc.bitrate).join(', ') }, 'Generating master playlist for chapter');
 
-         // Create variant playlists data structure
          const variantPlaylists = transcodedChapters.map(tc => ({
             bitrate: tc.bitrate,
-            playlist: '', // We don't need the actual playlist content for master generation
-            segments: [] // We don't need segments for master generation
+            playlist: '',
+            segments: [],
          }));
 
-         // Generate master playlist using TranscodingService
          const masterPlaylist = this.transcodingService.generateMasterPlaylist(variantPlaylists, chapterId);
 
          return masterPlaylist;
@@ -188,15 +205,13 @@ export class MasterPlaylistProcessor {
     */
    private async uploadMasterPlaylist(chapterId: string, masterPlaylist: string): Promise<void> {
       try {
-         // Initialize storage provider
          await this.transcodingService['initializeStorageProvider']();
 
-         // Upload master playlist to bit_transcode/{chapter_id} directory
          const masterPlaylistPath = toStorageKey(`bit_transcode/${chapterId}/master.m3u8`);
          await this.transcodingService['storageProvider']!.uploadFile(
             masterPlaylistPath,
             Buffer.from(masterPlaylist),
-            'application/vnd.apple.mpegurl'
+            'application/vnd.apple.mpegurl',
          );
 
          logger.info({ chapterId }, 'Master playlist uploaded for chapter');
