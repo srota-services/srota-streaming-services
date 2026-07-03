@@ -44,8 +44,11 @@ export class RabbitMQConnection {
    private channel: amqp.Channel | null = null;
    private isConnecting = false;
    private reconnectAttempts = 0;
-   private maxReconnectAttempts = 10;
    private reconnectDelay = 5000; // 5 seconds
+   private maxReconnectDelay = 60_000;
+   private reconnectScheduled = false;
+   /** Consumer setup functions re-invoked after every reconnect. */
+   private readonly consumerSetups = new Map<string, () => Promise<void>>();
 
    private constructor() { }
 
@@ -75,19 +78,32 @@ export class RabbitMQConnection {
 
       try {
          rabbitmqLogger.info('Connecting to RabbitMQ...');
-         this.connection = await amqp.connect(config.RABBITMQ_URL) as unknown as amqp.Connection;
+         this.connection = await amqp.connect(config.RABBITMQ_URL, {
+            heartbeat: 30,
+         }) as unknown as amqp.Connection;
 
          this.connection!.on('error', (error: Error) => {
             rabbitmqLogger.error({ err: error }, 'RabbitMQ connection error');
-            this.handleConnectionError();
+            this.scheduleReconnect();
          });
 
          this.connection!.on('close', () => {
             rabbitmqLogger.warn('RabbitMQ connection closed');
-            this.handleConnectionError();
+            this.scheduleReconnect();
          });
 
          this.channel = await (this.connection as any).createChannel();
+
+         this.channel!.on('error', (error: Error) => {
+            rabbitmqLogger.error({ err: error }, 'RabbitMQ channel error');
+            this.scheduleReconnect();
+         });
+
+         this.channel!.on('close', () => {
+            rabbitmqLogger.warn('RabbitMQ channel closed');
+            this.channel = null;
+            this.scheduleReconnect();
+         });
 
          // Set prefetch to prevent overwhelming workers
          await this.channel!.prefetch(1);
@@ -96,15 +112,56 @@ export class RabbitMQConnection {
          this.reconnectAttempts = 0;
          this.isConnecting = false;
 
-         // Setup exchanges and queues
+         // Setup exchanges and queues, then restore all registered consumers
          await this.setupExchangesAndQueues();
+         await this.restoreAllConsumers();
 
       } catch (error) {
          rabbitmqLogger.error({ err: error }, 'Failed to connect to RabbitMQ');
          this.isConnecting = false;
-         await this.handleConnectionError();
+         this.clearConnectionState();
+         this.scheduleReconnect();
          throw error;
       }
+   }
+
+   /**
+    * Register a consumer and start it when the channel is available.
+    * The setup function is stored and re-run automatically after reconnect.
+    */
+   private async registerConsumer(consumerId: string, setup: () => Promise<void>): Promise<void> {
+      this.consumerSetups.set(consumerId, setup);
+      if (this.channel) {
+         await setup();
+      }
+   }
+
+   /**
+    * Re-subscribe all registered consumers (after reconnect or channel recovery).
+    */
+   private async restoreAllConsumers(): Promise<void> {
+      if (this.consumerSetups.size === 0) {
+         return;
+      }
+
+      rabbitmqLogger.info(
+         { consumerCount: this.consumerSetups.size },
+         'Restoring RabbitMQ consumers after reconnect',
+      );
+
+      for (const [consumerId, setup] of this.consumerSetups) {
+         try {
+            await setup();
+            rabbitmqLogger.info({ consumerId }, 'Restored RabbitMQ consumer');
+         } catch (error) {
+            rabbitmqLogger.error({ err: error, consumerId }, 'Failed to restore RabbitMQ consumer');
+         }
+      }
+   }
+
+   private clearConnectionState(): void {
+      this.connection = null;
+      this.channel = null;
    }
 
    /**
@@ -311,13 +368,14 @@ export class RabbitMQConnection {
       queueName: string,
       callback: (jobData: TranscodingJobData, message: amqp.Message) => Promise<void>
    ): Promise<void> {
-      if (!this.channel) {
-         throw new Error('Channel not available');
-      }
-
       const fullQueueName = `${config.RABBITMQ_QUEUE_PREFIX}.transcode.${queueName}`;
+      const consumerId = `transcode.${queueName}`;
 
-      try {
+      await this.registerConsumer(consumerId, async () => {
+         if (!this.channel) {
+            throw new Error('Channel not available');
+         }
+
          await this.channel.consume(fullQueueName, async (message: amqp.Message | null) => {
             if (!message) {
                return;
@@ -329,23 +387,17 @@ export class RabbitMQConnection {
 
                await callback(jobData, message);
 
-               // Acknowledge the message
                this.channel!.ack(message);
             } catch (error) {
                rabbitmqLogger.error({ err: error }, 'Error processing transcoding job');
-
-               // Reject and requeue the message
                this.channel!.nack(message, false, true);
             }
          }, {
-            noAck: false
+            noAck: false,
          });
 
          rabbitmqLogger.info({ queueName: fullQueueName }, 'Started consuming transcoding jobs');
-      } catch (error) {
-         rabbitmqLogger.error({ err: error, queueName: fullQueueName }, 'Error setting up transcoding consumer');
-         throw error;
-      }
+      });
    }
 
    /**
@@ -356,11 +408,13 @@ export class RabbitMQConnection {
       queueName: string,
       callback: (data: T, message: amqp.Message) => Promise<void>
    ): Promise<void> {
-      if (!this.channel) {
-         throw new Error('Channel not available');
-      }
+      const consumerId = `generic.${queueName}`;
 
-      try {
+      await this.registerConsumer(consumerId, async () => {
+         if (!this.channel) {
+            throw new Error('Channel not available');
+         }
+
          await this.channel.consume(queueName, async (message: amqp.Message | null) => {
             if (!message) {
                return;
@@ -372,23 +426,17 @@ export class RabbitMQConnection {
 
                await callback(data, message);
 
-               // Acknowledge the message after successful processing
                this.channel!.ack(message);
             } catch (error) {
                rabbitmqLogger.error({ err: error, queueName }, 'Error processing message from queue');
-
-               // Reject and requeue the message on error
                this.channel!.nack(message, false, true);
             }
          }, {
-            noAck: false
+            noAck: false,
          });
 
          rabbitmqLogger.info({ queueName }, 'Started consuming messages from queue');
-      } catch (error) {
-         rabbitmqLogger.error({ err: error, queueName }, 'Error setting up consumer');
-         throw error;
-      }
+      });
    }
 
    /**
@@ -427,31 +475,40 @@ export class RabbitMQConnection {
    }
 
    /**
-    * Handle connection errors and implement reconnection logic
+    * Schedule a reconnect with exponential backoff (retries indefinitely for worker uptime).
     */
-   private async handleConnectionError(): Promise<void> {
-      this.connection = null;
-      this.channel = null;
-
-      if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-         rabbitmqLogger.error('Max reconnection attempts reached; stopping reconnection attempts');
+   private scheduleReconnect(): void {
+      if (this.reconnectScheduled || this.isConnecting) {
          return;
       }
 
+      const staleConnection = this.connection;
+      const staleChannel = this.channel;
+      this.clearConnectionState();
+
+      void staleChannel?.close().catch(() => undefined);
+      void (staleConnection as { close?: () => Promise<void> } | null)?.close?.().catch(() => undefined);
+
+      this.reconnectScheduled = true;
       this.reconnectAttempts++;
-      const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1); // Exponential backoff
+
+      const delay = Math.min(
+         this.reconnectDelay * Math.pow(2, Math.min(this.reconnectAttempts - 1, 5)),
+         this.maxReconnectDelay,
+      );
 
       rabbitmqLogger.warn({
          delay,
          attempt: this.reconnectAttempts,
-         maxAttempts: this.maxReconnectAttempts,
-      }, 'Attempting to reconnect to RabbitMQ');
+      }, 'Scheduling RabbitMQ reconnect');
 
       setTimeout(async () => {
+         this.reconnectScheduled = false;
+
          try {
             await this.connect();
          } catch (error) {
-            rabbitmqLogger.error({ err: error }, 'Reconnection attempt failed');
+            rabbitmqLogger.error({ err: error }, 'RabbitMQ reconnection attempt failed');
          }
       }, delay);
    }
@@ -461,6 +518,9 @@ export class RabbitMQConnection {
     */
    public async close(): Promise<void> {
       try {
+         this.consumerSetups.clear();
+         this.reconnectScheduled = false;
+
          if (this.channel) {
             await this.channel.close();
             this.channel = null;
