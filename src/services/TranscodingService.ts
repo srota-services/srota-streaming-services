@@ -21,6 +21,9 @@ import { logger } from '../config/logger';
 import { BitrateTranscodingRepository } from './BitrateTranscodingRepository';
 import { TranscodingEventPublisher } from './TranscodingEventPublisher';
 import { configureFfmpeg } from '../utils/ffmpegPath';
+import { runWrite } from '../utils/prismaTransaction';
+import { rethrowServiceError } from '../utils/serviceError';
+import { updateTranscodingJobStatus } from '../utils/transcodingJobStatus';
 
 configureFfmpeg();
 
@@ -184,7 +187,12 @@ export class TranscodingService {
                }, 'Failed to transcode bitrate for chapter');
 
                // Update database with error
-               await this.updateTranscodingJob(id, bitrate, 'failed', 0, error.message);
+               await updateTranscodingJobStatus(this.prisma, {
+                  chapterId: id,
+                  status: 'failed',
+                  progress: 0,
+                  errorMessage: error.message,
+               });
 
                // Continue with other bitrates
                continue;
@@ -339,7 +347,11 @@ export class TranscodingService {
                   progress = Math.round(Math.min(85, progressInfo.percent));
                   void this.bitrateRepo.updateProgress(id, bitrate, progress);
                   void this.eventPublisher.publishProgress(id, bitrate, progress);
-                  void this.updateTranscodingJob(id, bitrate, 'processing', progress);
+                  void updateTranscodingJobStatus(this.prisma, {
+                     chapterId: id,
+                     status: 'processing',
+                     progress,
+                  });
                }
             })
             .on('end', async () => {
@@ -403,7 +415,11 @@ export class TranscodingService {
                   }
 
                   await this.eventPublisher.publishStatusTransition(id, bitrate, 'completed', 100);
-                  await this.updateTranscodingJob(id, bitrate, 'completed', 100);
+                  await updateTranscodingJobStatus(this.prisma, {
+                     chapterId: id,
+                     status: 'completed',
+                     progress: 100,
+                  });
 
                   // Get segment list from playlist
                   const segmentList = this.extractSegmentsFromPlaylist(playlistContent);
@@ -430,7 +446,12 @@ export class TranscodingService {
                   progress,
                   error.message
                );
-               await this.updateTranscodingJob(id, bitrate, 'failed', progress, error.message);
+               await updateTranscodingJobStatus(this.prisma, {
+                  chapterId: id,
+                  status: 'failed',
+                  progress,
+                  errorMessage: error.message,
+               });
                reject(error);
             });
 
@@ -819,83 +840,36 @@ export class TranscodingService {
       bitrate: number,
       _result: { bitrate: number; playlist: string; segments: string[] }
    ): Promise<void> {
+      const playlistUrl = toStorageKey(`bit_transcode/${id}/${bitrate}k/playlist.m3u8`);
+      const segmentsPath = toStorageKey(`bit_transcode/${id}/${bitrate}k/`);
+
       try {
-         const playlistUrl = toStorageKey(`bit_transcode/${id}/${bitrate}k/playlist.m3u8`);
-         const segmentsPath = toStorageKey(`bit_transcode/${id}/${bitrate}k/`);
-
-         await this.prisma.transcodedChapter.upsert({
-            where: {
-               chapterId_bitrate: {
+         await runWrite(this.prisma, async tx => {
+            await tx.transcodedChapter.upsert({
+               where: {
+                  chapterId_bitrate: {
+                     chapterId: id,
+                     bitrate,
+                  },
+               },
+               update: {
+                  playlistUrl,
+                  segmentsPath,
+                  status: 'completed',
+                  updatedAt: new Date(),
+               },
+               create: {
                   chapterId: id,
-                  bitrate
-               }
-            },
-            update: {
-               playlistUrl,
-               segmentsPath,
-               status: 'completed',
-               updatedAt: new Date()
-            },
-            create: {
-               chapterId: id,
-               bitrate,
-               playlistUrl,
-               segmentsPath,
-               storageProvider: config.STORAGE_PROVIDER,
-               status: 'completed'
-            }
-         });
-      } catch (error: any) {
-         logger.error({ err: error }, 'Error updating transcoded chapter');
-         throw error;
-      }
-   }
-
-   /**
-    * Update transcoding job in database
-    */
-   private async updateTranscodingJob(
-      id: string,
-      _bitrate: number,
-      status: string,
-      progress: number,
-      errorMessage?: string
-   ): Promise<void> {
-      try {
-         // Find the most recent job for this chapter
-         const existingJob = await this.prisma.transcodingJob.findFirst({
-            where: { chapterId: id },
-            orderBy: { createdAt: 'desc' }
-         });
-
-         if (existingJob) {
-            // Update existing job
-            await this.prisma.transcodingJob.update({
-               where: { id: existingJob.id },
-               data: {
-                  status,
-                  progress,
-                  ...(errorMessage && { errorMessage }),
-                  ...(status === 'processing' && !existingJob.startedAt && { startedAt: new Date() }),
-                  ...((status === 'completed' || status === 'failed') && { completedAt: new Date() }),
-                  updatedAt: new Date()
-               }
+                  bitrate,
+                  playlistUrl,
+                  segmentsPath,
+                  storageProvider: config.STORAGE_PROVIDER,
+                  status: 'completed',
+               },
             });
-         } else {
-            // Create new job if none exists
-            await this.prisma.transcodingJob.create({
-               data: {
-                  chapterId: id,
-                  status,
-                  progress,
-                  ...(errorMessage && { errorMessage }),
-                  ...(status === 'processing' && { startedAt: new Date() }),
-                  ...((status === 'completed' || status === 'failed') && { completedAt: new Date() })
-               }
-            });
-         }
-      } catch (error: any) {
-         logger.error({ err: error }, 'Error updating transcoding job');
+         });
+      } catch (error: unknown) {
+         rethrowServiceError(error, { operation: 'updateTranscodedChapter', chapterId: id, bitrate });
       }
    }
 

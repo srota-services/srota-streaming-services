@@ -10,6 +10,7 @@ import { ErrorHandler } from '../middleware/ErrorHandler';
 import { ResponseHandler } from '../utils/ResponseHandler';
 import { MessageHandler } from '../utils/MessageHandler';
 import { logger } from '../config/logger';
+import { isNonEmptyChapterId, isNumericBitrate } from '../utils/streamingValidation';
 
 export class StreamingController {
    private prisma: PrismaClient;
@@ -61,6 +62,8 @@ export class StreamingController {
     *               type: string
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     *       404:
     *         description: Chapter not found or no transcoded versions available
     *       500:
@@ -74,6 +77,16 @@ export class StreamingController {
 
       if (!userId) {
          ResponseHandler.unauthorized(res, MessageHandler.getUnauthorizedMessageFromRequest(req, 'not_authenticated'));
+         return;
+      }
+
+      if (!isNonEmptyChapterId(chapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
+         return;
+      }
+
+      if (preferredBitrate !== undefined && !isNumericBitrate(preferredBitrate)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_bitrate'));
          return;
       }
 
@@ -127,6 +140,8 @@ export class StreamingController {
     *         description: Invalid bitrate path parameter
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     *       404:
     *         description: Chapter not found or transcoded version not available
     *       500:
@@ -142,7 +157,12 @@ export class StreamingController {
          return;
       }
 
-      if (isNaN(bitrate)) {
+      if (!isNonEmptyChapterId(chapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
+         return;
+      }
+
+      if (isNaN(bitrate) || !isNumericBitrate(bitrate)) {
          ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_bitrate'));
          return;
       }
@@ -202,6 +222,8 @@ export class StreamingController {
     *         description: Invalid bitrate path parameter
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     *       404:
     *         description: Segment not found
     *       500:
@@ -218,7 +240,12 @@ export class StreamingController {
          return;
       }
 
-      if (isNaN(bitrate)) {
+      if (!isNonEmptyChapterId(chapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
+         return;
+      }
+
+      if (isNaN(bitrate) || !isNumericBitrate(bitrate)) {
          ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_bitrate'));
          return;
       }
@@ -294,6 +321,8 @@ export class StreamingController {
     *                   statusCode: 200
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     *       500:
     *         description: Internal server error
     */
@@ -303,6 +332,11 @@ export class StreamingController {
 
       if (!userId) {
          ResponseHandler.unauthorized(res, MessageHandler.getUnauthorizedMessageFromRequest(req, 'not_authenticated'));
+         return;
+      }
+
+      if (!isNonEmptyChapterId(chapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
          return;
       }
 
@@ -369,6 +403,8 @@ export class StreamingController {
     *               statusCode: 200
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     *       404:
     *         $ref: '#/components/responses/NotFound'
     *       500:
@@ -381,6 +417,16 @@ export class StreamingController {
 
       if (!userId) {
          ResponseHandler.unauthorized(res, MessageHandler.getUnauthorizedMessageFromRequest(req, 'not_authenticated'));
+         return;
+      }
+
+      if (!isNonEmptyChapterId(chapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
+         return;
+      }
+
+      if (bitrate !== undefined && !isNumericBitrate(bitrate)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_bitrate'));
          return;
       }
 
@@ -452,6 +498,8 @@ export class StreamingController {
     *               statusCode: 200
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     *       500:
     *         description: Internal server error
     */
@@ -461,6 +509,11 @@ export class StreamingController {
 
       if (!userId) {
          ResponseHandler.unauthorized(res, MessageHandler.getUnauthorizedMessageFromRequest(req, 'not_authenticated'));
+         return;
+      }
+
+      if (chapterId && !isNonEmptyChapterId(chapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
          return;
       }
 

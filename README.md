@@ -24,8 +24,8 @@ The root `GET /` response also lists `apiDocs` and `openApiSpec` paths. Streamin
 
 ## 📋 Prerequisites
 
-- Node.js (v16 or higher)
-- npm or yarn
+- Node.js **26.4.0**
+- npm **11.17.0** (run `nvm use` / `fnm use` in this directory to match `.nvmrc`)
 
 ## 🛠️ Installation
 

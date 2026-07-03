@@ -9,8 +9,9 @@ import session from 'express-session';
 import express from 'express';
 import helmet from 'helmet';
 import { config } from './config/env';
-import { logger } from './config/logger';
+import { logger, errorLogger } from './config/logger';
 import { apiLoggerMiddleware } from './middleware/ApiLoggerMiddleware';
+import { apiErrorLogMiddleware } from './middleware/ApiErrorLogMiddleware';
 import { ErrorHandler } from './middleware/ErrorHandler';
 import { requireHealthSupportAuth } from './middleware/healthSupportAuth';
 import { RabbitMQFactory } from './config/rabbitmq';
@@ -23,6 +24,15 @@ import { setupSwagger } from './config/swagger';
 import { PrismaClient } from '@prisma/client';
 import { adapter } from './config/prisma.config';
 import path from 'path';
+
+process.on('uncaughtException', (err) => {
+   errorLogger.error({ category: 'system', type: 'uncaughtException', err }, 'Uncaught exception');
+   process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+   errorLogger.error({ category: 'system', type: 'unhandledRejection', err: reason }, 'Unhandled rejection');
+});
 
 const app = express();
 
@@ -39,6 +49,7 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(apiLoggerMiddleware);
+app.use(apiErrorLogMiddleware);
 
 // Session configuration
 app.use(session({

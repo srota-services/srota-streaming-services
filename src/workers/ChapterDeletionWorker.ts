@@ -9,6 +9,8 @@ import { logger } from '../config/logger';
 import { BullQueueManager } from '../services/BullQueueManager';
 import { StreamingCacheFactory } from '../services/StreamingCacheService';
 import { TranscodingArtifactCleanupService } from '../services/TranscodingArtifactCleanupService';
+import { runInTransaction } from '../utils/prismaTransaction';
+import { rethrowServiceError } from '../utils/serviceError';
 
 export class ChapterDeletionWorker {
    private prisma: PrismaClient;
@@ -108,28 +110,38 @@ export class ChapterDeletionWorker {
 
          await TranscodingArtifactCleanupService.cleanupChapterArtifacts(chapterId);
 
-         const transcodingJobsResult = await this.prisma.transcodingJob.deleteMany({
-            where: { chapterId },
-         });
-         if (transcodingJobsResult.count > 0) {
-            logger.info({ chapterId, count: transcodingJobsResult.count }, 'Deleted transcoding job(s) for chapter');
+         try {
+            const { transcodingJobsResult, sessionsResult, deleteResult } = await runInTransaction(
+               this.prisma,
+               async tx => {
+                  const transcodingJobsResult = await tx.transcodingJob.deleteMany({
+                     where: { chapterId },
+                  });
+                  const sessionsResult = await tx.streamingSession.deleteMany({
+                     where: { chapterId },
+                  });
+                  const deleteResult = await tx.transcodedChapter.deleteMany({
+                     where: { chapterId },
+                  });
+                  return { transcodingJobsResult, sessionsResult, deleteResult };
+               },
+            );
+
+            if (transcodingJobsResult.count > 0) {
+               logger.info({ chapterId, count: transcodingJobsResult.count }, 'Deleted transcoding job(s) for chapter');
+            }
+
+            if (sessionsResult.count > 0) {
+               logger.info({ chapterId, count: sessionsResult.count }, 'Deleted streaming session(s) for chapter');
+            }
+
+            logger.info(
+               { chapterId, count: deleteResult.count },
+               'Successfully completed chapter deletion cleanup'
+            );
+         } catch (error: unknown) {
+            rethrowServiceError(error, { operation: 'processChapterDeletionDbCleanup', chapterId });
          }
-
-         const sessionsResult = await this.prisma.streamingSession.deleteMany({
-            where: { chapterId },
-         });
-         if (sessionsResult.count > 0) {
-            logger.info({ chapterId, count: sessionsResult.count }, 'Deleted streaming session(s) for chapter');
-         }
-
-         const deleteResult = await this.prisma.transcodedChapter.deleteMany({
-            where: { chapterId },
-         });
-
-         logger.info(
-            { chapterId, count: deleteResult.count },
-            'Successfully completed chapter deletion cleanup'
-         );
       } catch (error: unknown) {
          logger.error({ err: error, chapterId }, 'Error during chapter deletion cleanup');
          throw error;

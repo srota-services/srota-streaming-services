@@ -19,14 +19,12 @@ export class ErrorHandler {
    /**
     * Global error handler
     */
-   static handleError = (err: Error, req: Request, res: Response, _next: any): void => {
-      logger.error({ err: err }, 'Error');
+   static handleError = (err: Error, req: Request, res: Response, _next: NextFunction): void => {
+      (res.locals as { apiError?: Error }).apiError = err;
 
-      // Default error response
       let statusCode = 500;
       let message = 'Internal Server Error';
 
-      // Handle specific error types
       if (err.name === 'ValidationError') {
          statusCode = 400;
          message = 'Validation Error';
@@ -41,6 +39,19 @@ export class ErrorHandler {
          message = 'Not Found';
       }
 
+      const errorContext = {
+         err,
+         method: req.method,
+         url: req.originalUrl,
+         statusCode,
+      };
+
+      if (statusCode < 500) {
+         logger.warn(errorContext, 'Client error');
+      } else {
+         logger.error(errorContext, 'Server error');
+      }
+
       const errorResponse = {
          error: message,
          timestamp: new Date().toISOString(),
@@ -48,10 +59,9 @@ export class ErrorHandler {
          method: req.method
       };
 
-      // Include error details in development
       if (process.env.NODE_ENV === 'development') {
-         (errorResponse as any).details = err.message;
-         (errorResponse as any).stack = err.stack;
+         (errorResponse as Record<string, unknown>).details = err.message;
+         (errorResponse as Record<string, unknown>).stack = err.stack;
       }
 
       res.status(statusCode).json(errorResponse);
@@ -63,7 +73,7 @@ export class ErrorHandler {
    static createError = (message: string, statusCode: number = 500, name?: string): Error => {
       const error = new Error(message);
       error.name = name || 'CustomError';
-      (error as any).statusCode = statusCode;
+      (error as Error & { statusCode: number }).statusCode = statusCode;
       return error;
    };
 

@@ -13,6 +13,7 @@ import { TranscodingRetryService } from '../services/TranscodingRetryService';
 import { BullQueueManager } from '../services/BullQueueManager';
 import { TranscodingEvent } from '../types/transcoding';
 import { logger } from '../config/logger';
+import { isNonEmptyChapterId, isNumericBitrate } from '../utils/streamingValidation';
 
 const HEARTBEAT_MS = 30_000;
 
@@ -53,6 +54,8 @@ export class TranscodingEventsController {
     *               type: string
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     */
    getChapterTranscodingEvents = ErrorHandler.asyncHandler(async (req: Request, res: Response): Promise<void> => {
       const chapterId = req.params['chapterId'] as string;
@@ -60,6 +63,11 @@ export class TranscodingEventsController {
 
       if (!userId) {
          ResponseHandler.unauthorized(res, MessageHandler.getUnauthorizedMessageFromRequest(req, 'not_authenticated'));
+         return;
+      }
+
+      if (!isNonEmptyChapterId(chapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
          return;
       }
 
@@ -87,6 +95,8 @@ export class TranscodingEventsController {
     *             schema: { type: string }
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     */
    getMultiplexedTranscodingEvents = ErrorHandler.asyncHandler(async (req: Request, res: Response): Promise<void> => {
       const userId = (req as Request & { user?: { id: string } }).user?.id;
@@ -104,6 +114,11 @@ export class TranscodingEventsController {
 
       if (!chapterIds.length) {
          ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_request'));
+         return;
+      }
+
+      if (!chapterIds.every(isNonEmptyChapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
          return;
       }
 
@@ -137,6 +152,8 @@ export class TranscodingEventsController {
     *                       $ref: '#/components/schemas/ChapterTranscodingStatusDetail'
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     */
    getDetailedTranscodingStatus = ErrorHandler.asyncHandler(async (req: Request, res: Response): Promise<void> => {
       const chapterId = req.params['chapterId'] as string;
@@ -144,6 +161,11 @@ export class TranscodingEventsController {
 
       if (!userId) {
          ResponseHandler.unauthorized(res, MessageHandler.getUnauthorizedMessageFromRequest(req, 'not_authenticated'));
+         return;
+      }
+
+      if (!isNonEmptyChapterId(chapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
          return;
       }
 
@@ -187,6 +209,8 @@ export class TranscodingEventsController {
     *                           items: { type: integer }
     *       401:
     *         $ref: '#/components/responses/Unauthorized'
+    *       403:
+    *         $ref: '#/components/responses/Forbidden'
     */
    retryTranscoding = ErrorHandler.asyncHandler(async (req: Request, res: Response): Promise<void> => {
       const chapterId = req.params['chapterId'] as string;
@@ -200,6 +224,16 @@ export class TranscodingEventsController {
 
       if (!inputPath) {
          ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_request'));
+         return;
+      }
+
+      if (!isNonEmptyChapterId(chapterId)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_chapter_id'));
+         return;
+      }
+
+      if (bitrates !== undefined && (!Array.isArray(bitrates) || !bitrates.every(isNumericBitrate))) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_bitrate'));
          return;
       }
 

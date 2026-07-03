@@ -35,6 +35,9 @@ export interface MessageCatalog {
       segment_not_found: string;
       storage_error: string;
       transcoding_error: string;
+      subscription_required: string;
+      subscription_tier_too_low_chapter: string;
+      guest_streaming_not_allowed: string;
    };
    success: {
       operation_completed: string;
@@ -70,7 +73,10 @@ const messages: Record<string, MessageCatalog> = {
          transcoded_version_not_available: 'Transcoded version not available for this bitrate',
          segment_not_found: 'Segment file not found',
          storage_error: 'Storage operation failed',
-         transcoding_error: 'Transcoding operation failed'
+         transcoding_error: 'Transcoding operation failed',
+         subscription_required: 'Subscribe to listen to this audiobook',
+         subscription_tier_too_low_chapter: 'Your plan does not include this chapter. Upgrade to listen',
+         guest_streaming_not_allowed: 'Sign up or sign in to play audiobooks',
       },
       success: {
          operation_completed: 'Operation completed successfully',

@@ -50,6 +50,7 @@ process.env['MAX_TRANSCODING_WORKERS'] = '2';
 process.env['CACHE_TTL'] = '3600';
 
 process.env['AUTH_SERVICE_URL'] = 'http://localhost:8080';
+process.env['APP_SERVICE_URL'] = 'http://localhost:8081';
 process.env['JWKS_ENDPOINT'] = 'http://localhost:8080/auth/.well-known/jwks.json';
 
 jest.setTimeout(10000);
